@@ -128,24 +128,36 @@ Paste the script below into the browser console and press Enter.
     url: a.href
   }));
 
+  const CONCURRENCY = 4;
   const result = [];
+  let index = 0;
 
-  for (const item of stateLinks) {
-    const response = await fetch(item.url);
-    const html = await response.text();
+  const worker = async () => {
+    while (index < stateLinks.length) {
+      const current = stateLinks[index++];
+      console.log(`Fetching districts for: ${current.state}`);
 
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, "text/html");
+      const res = await fetch(current.url);
+      const html = await res.text();
 
-    const districts = Array.from(
-      doc.querySelectorAll(".search-row .search-title")
-    ).map(el => el.innerText.trim());
+      const doc = new DOMParser().parseFromString(html, "text/html");
 
-    result.push({
-      state: item.state,
-      districts
-    });
-  }
+      const districts = Array.from(
+        doc.querySelectorAll(".search-row .search-title")
+      ).map(el => el.innerText.trim());
+
+      console.log(`✔ ${current.state}: ${districts.length} districts`);
+
+      result.push({
+        state: current.state,
+        districts
+      });
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: CONCURRENCY }, worker)
+  );
 
   const json = JSON.stringify(result, null, 2);
   const blob = new Blob([json], { type: "application/json" });
@@ -153,11 +165,14 @@ Paste the script below into the browser console and press Enter.
 
   const a = document.createElement("a");
   a.href = url;
-  a.download = "india-states-districts-latest.json";
+  a.download = "india-states-districts.json";
   a.click();
 
   URL.revokeObjectURL(url);
+
+  console.log("Download complete");
 })();
+
 ```
 
 ---
