@@ -121,56 +121,109 @@ Paste the script below into the browser console and press Enter.
 
 ```js
 (async () => {
+
+  const CONCURRENCY = 3; // keep low (gov server)
+  const STEP = 5;
+  const result = [];
+  let index = 0;
+
   const stateLinks = Array.from(
     document.querySelectorAll(".state li a")
   ).map(a => ({
     state: a.innerText.trim(),
-    url: a.href
+    url: a.href.replace("categories","E042/organizations")
   }));
 
-  const CONCURRENCY = 4;
-  const result = [];
-  let index = 0;
+  async function scrapeState(current) {
 
-  const worker = async () => {
+    console.log(`Fetching state page: ${current.state}`);
+
+    const res = await fetch(current.url);
+    const html = await res.text();
+    const doc = new DOMParser().parseFromString(html, "text/html");
+
+    const districts = new Set();
+
+    // 1️⃣ Extract already loaded districts
+    doc.querySelectorAll(".search-row .search-title")
+      .forEach(el => districts.add(el.innerText.trim()));
+
+    // 2️⃣ Build AJAX continuation base URL
+    const urlParts = new URL(current.url).pathname.split("/");
+    const sg = urlParts[1];
+    const stateCode = urlParts[2];
+    const category = urlParts[3];
+
+    let start = districts.size;
+
+    while (true) {
+
+      const ajaxUrl = `/${sg}/${stateCode}/${category}/organizations_more/${start}/5`;
+
+      const res2 = await fetch(ajaxUrl, {
+        credentials: "same-origin",
+        headers: {
+          "X-Requested-With": "XMLHttpRequest"
+        }
+      });
+
+      const moreHTML = await res2.text();
+
+      if (!moreHTML || !moreHTML.trim()) {
+        break;
+      }
+
+      const moreDoc = new DOMParser().parseFromString(moreHTML, "text/html");
+
+      const newItems = moreDoc.querySelectorAll(".search-row .search-title");
+
+      if (!newItems.length) break;
+
+      newItems.forEach(el =>
+        districts.add(el.innerText.trim())
+      );
+
+      console.log(`${current.state} → fetched ${districts.size}`);
+
+      start += STEP;
+
+      await new Promise(r => setTimeout(r, 400)); // polite delay
+    }
+
+    console.log(`✔ DONE: ${current.state} (${districts.size})`);
+
+    return {
+      state: current.state,
+      districts: Array.from(districts)
+    };
+  }
+
+  async function worker() {
     while (index < stateLinks.length) {
       const current = stateLinks[index++];
-      console.log(`Fetching districts for: ${current.state}`);
-
-      const res = await fetch(current.url);
-      const html = await res.text();
-
-      const doc = new DOMParser().parseFromString(html, "text/html");
-
-      const districts = Array.from(
-        doc.querySelectorAll(".search-row .search-title")
-      ).map(el => el.innerText.trim());
-
-      console.log(`✔ ${current.state}: ${districts.length} districts`);
-
-      result.push({
-        state: current.state,
-        districts
-      });
+      const data = await scrapeState(current);
+      result.push(data);
     }
-  };
+  }
 
   await Promise.all(
     Array.from({ length: CONCURRENCY }, worker)
   );
 
+  // Download JSON
   const json = JSON.stringify(result, null, 2);
   const blob = new Blob([json], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
+  const downloadUrl = URL.createObjectURL(blob);
 
   const a = document.createElement("a");
-  a.href = url;
+  a.href = downloadUrl;
   a.download = "india-states-districts.json";
   a.click();
 
-  URL.revokeObjectURL(url);
+  URL.revokeObjectURL(downloadUrl);
 
-  console.log("Download complete");
+  console.log("Download complete ✅");
+
 })();
 
 ```
